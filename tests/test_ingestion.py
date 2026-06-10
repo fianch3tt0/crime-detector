@@ -1,87 +1,89 @@
-"""Phase 1 tests: SodaClient paging + incremental pull, normalize()."""
-import json
+"""Phase 1 tests: ArcGISClient paging + incremental pull, normalize()."""
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 import responses as responses_lib
 
-from crime_detector.ingestion.client import SodaClient
+from crime_detector.ingestion.client import ArcGISClient
 from crime_detector.ingestion.normalizer import NormalizedRecord, normalize
-from tests.conftest import MALFORMED_RECORDS, SAMPLE_RECORDS, SODA_URL
+from tests.conftest import ARCGIS_URL, MALFORMED_FEATURES, SAMPLE_FEATURES, _make_feature, _make_page
 
 
 # ---------------------------------------------------------------------------
-# SodaClient tests
+# ArcGISClient tests
 # ---------------------------------------------------------------------------
 
-def _register_page(rsps, records, status=200):
+def _register_page(rsps, features, exceeded=False, status=200):
     rsps.add(
         responses_lib.GET,
-        SODA_URL,
-        json=records,
+        ARCGIS_URL,
+        json=_make_page(features, exceeded=exceeded),
         status=status,
     )
 
 
 def _make_client(page_size=1000):
-    return SodaClient(endpoint=SODA_URL, app_token="test-token", page_size=page_size)
+    return ArcGISClient(endpoint=ARCGIS_URL, page_size=page_size)
 
 
-class TestSodaClientPaging:
-    def test_fetch_single_page(self, mock_soda):
-        _register_page(mock_soda, SAMPLE_RECORDS)  # 5 records < page_size=1000 → stop
+class TestArcGISClientPaging:
+    def test_fetch_single_page(self, mock_arcgis):
+        _register_page(mock_arcgis, SAMPLE_FEATURES)  # no exceededTransferLimit → stop
         client = _make_client()
         results = list(client.fetch_all())
         assert len(results) == 5
 
-    def test_fetch_multi_page(self, mock_soda):
+    def test_fetch_multi_page(self, mock_arcgis):
         page_size = 3
-        page1 = SAMPLE_RECORDS[:3]   # full page → continue
-        page2 = SAMPLE_RECORDS[3:5]  # partial page → stop
-        _register_page(mock_soda, page1)
-        _register_page(mock_soda, page2)
+        page1 = SAMPLE_FEATURES[:3]
+        page2 = SAMPLE_FEATURES[3:5]
+        _register_page(mock_arcgis, page1, exceeded=True)   # more data → continue
+        _register_page(mock_arcgis, page2, exceeded=False)  # last page → stop
         client = _make_client(page_size=page_size)
         results = list(client.fetch_all())
         assert len(results) == 5
 
-    def test_paging_stops_on_empty_page(self, mock_soda):
-        _register_page(mock_soda, SAMPLE_RECORDS[:3])
-        _register_page(mock_soda, [])
+    def test_paging_stops_when_exceeded_transfer_limit_false(self, mock_arcgis):
+        _register_page(mock_arcgis, SAMPLE_FEATURES[:3], exceeded=True)
+        _register_page(mock_arcgis, [], exceeded=False)
         client = _make_client(page_size=3)
         results = list(client.fetch_all())
         assert len(results) == 3
 
-    def test_incremental_date_filter_sends_where_param(self, mock_soda):
-        _register_page(mock_soda, [])
+    def test_incremental_date_filter_sends_timestamp_where(self, mock_arcgis):
+        _register_page(mock_arcgis, [])
         since = datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc)
         client = _make_client()
         list(client.fetch_all(since=since))
 
-        assert len(mock_soda.calls) == 1
-        req_url = mock_soda.calls[0].request.url
-        parsed = urlparse(req_url)
-        qs = parse_qs(parsed.query)
-        assert "$where" in qs
-        assert "2024-01-15" in qs["$where"][0]
+        assert len(mock_arcgis.calls) == 1
+        req_url = mock_arcgis.calls[0].request.url
+        qs = parse_qs(urlparse(req_url).query)
+        assert "where" in qs
+        assert "TIMESTAMP" in qs["where"][0]
+        assert "2024-01-15" in qs["where"][0]
 
-    def test_no_where_param_without_since(self, mock_soda):
-        _register_page(mock_soda, [])
+    def test_no_date_filter_without_since(self, mock_arcgis):
+        _register_page(mock_arcgis, [])
         client = _make_client()
         list(client.fetch_all(since=None))
 
-        req_url = mock_soda.calls[0].request.url
+        req_url = mock_arcgis.calls[0].request.url
         qs = parse_qs(urlparse(req_url).query)
-        assert "$where" not in qs
+        assert qs.get("where") == ["1=1"]
 
-    def test_app_token_header_sent(self, mock_soda):
-        _register_page(mock_soda, [])
-        client = SodaClient(endpoint=SODA_URL, app_token="my-token", page_size=1000)
+    def test_outsr_4326_always_sent(self, mock_arcgis):
+        _register_page(mock_arcgis, [])
+        client = _make_client()
         list(client.fetch_all())
-        assert mock_soda.calls[0].request.headers.get("X-App-Token") == "my-token"
 
-    def test_http_error_raises(self, mock_soda):
-        mock_soda.add(responses_lib.GET, SODA_URL, status=500, body="Internal Server Error")
+        req_url = mock_arcgis.calls[0].request.url
+        qs = parse_qs(urlparse(req_url).query)
+        assert qs.get("outSR") == ["4326"]
+
+    def test_http_error_raises(self, mock_arcgis):
+        mock_arcgis.add(responses_lib.GET, ARCGIS_URL, status=500, body="Internal Server Error")
         client = _make_client()
         with pytest.raises(Exception):
             list(client.fetch_all())
@@ -91,24 +93,24 @@ class TestSodaClientPaging:
 # normalize() tests
 # ---------------------------------------------------------------------------
 
-VALID_RAW = {
-    ":id": "FW-001",
-    "nature_of_call": "ASSAULT",
-    "offense_description": "ASSAULT - SIMPLE",
-    "date": "2024-03-15T02:30:00",
-    "latitude": "32.7555",
-    "longitude": "-97.3208",
-    "beat": "B11",
-    "sector": "EAST",
-}
+VALID_FEATURE = _make_feature(
+    objectid=1001,
+    category="ASSAULT",
+    offense="ASSAULT - SIMPLE",
+    from_date_ms=1710469800000,  # 2024-03-15T02:30:00Z
+    lat=32.7555,
+    lon=-97.3208,
+    beat="B11",
+    division="EAST",
+)
 
 
 class TestNormalize:
-    def test_normalize_valid_record(self):
-        rec = normalize(VALID_RAW)
+    def test_normalize_valid_feature(self):
+        rec = normalize(VALID_FEATURE)
         assert rec is not None
         assert isinstance(rec, NormalizedRecord)
-        assert rec.raw_id == "FW-001"
+        assert rec.raw_id == "1001"
         assert rec.category == "ASSAULT"
         assert rec.offense == "ASSAULT - SIMPLE"
         assert rec.lat == pytest.approx(32.7555)
@@ -118,59 +120,42 @@ class TestNormalize:
         assert rec.timestamp.tzinfo is not None
 
     def test_normalize_output_shape(self):
-        rec = normalize(VALID_RAW)
+        rec = normalize(VALID_FEATURE)
         assert rec is not None
         for field in ("raw_id", "category", "offense", "timestamp", "lat", "lon", "beat", "division"):
             assert hasattr(rec, field), f"Missing field: {field}"
 
     def test_normalize_missing_lat_returns_none(self):
-        raw = {**VALID_RAW, "latitude": ""}
-        assert normalize(raw) is None
+        feat = _make_feature(objectid=2, lat=None)
+        assert normalize(feat) is None
 
     def test_normalize_missing_lon_returns_none(self):
-        raw = {**VALID_RAW, "longitude": ""}
-        assert normalize(raw) is None
-
-    def test_normalize_none_lat_returns_none(self):
-        raw = {**VALID_RAW, "latitude": None}
-        assert normalize(raw) is None
-
-    def test_normalize_nonnumeric_lat_returns_none(self):
-        raw = {**VALID_RAW, "latitude": "abc"}
-        assert normalize(raw) is None
+        feat = _make_feature(objectid=3, lon=None)
+        assert normalize(feat) is None
 
     def test_normalize_invalid_coords_out_of_bbox_lat(self):
-        raw = {**VALID_RAW, "latitude": "999"}
-        assert normalize(raw) is None
+        feat = _make_feature(objectid=4, lat=999)
+        assert normalize(feat) is None
 
     def test_normalize_invalid_coords_out_of_bbox_lon(self):
-        raw = {**VALID_RAW, "longitude": "999"}
-        assert normalize(raw) is None
+        feat = _make_feature(objectid=5, lon=999)
+        assert normalize(feat) is None
 
-    def test_normalize_unparseable_date_returns_none(self):
-        raw = {**VALID_RAW, "date": "not-a-date"}
-        assert normalize(raw) is None
+    def test_normalize_missing_date_returns_none(self):
+        feat = _make_feature(objectid=6, from_date_ms=None)
+        assert normalize(feat) is None
 
-    def test_normalize_empty_date_returns_none(self):
-        raw = {**VALID_RAW, "date": ""}
-        assert normalize(raw) is None
-
-    def test_normalize_nested_location_coords(self):
-        raw = {k: v for k, v in VALID_RAW.items() if k not in ("latitude", "longitude")}
-        raw["location"] = {"coordinates": [-97.3208, 32.7555]}
-        rec = normalize(raw)
+    def test_normalize_epoch_ms_parsed_correctly(self):
+        rec = normalize(VALID_FEATURE)
         assert rec is not None
-        assert rec.lat == pytest.approx(32.7555)
-        assert rec.lon == pytest.approx(-97.3208)
+        assert rec.timestamp == datetime(2024, 3, 15, 2, 30, 0, tzinfo=timezone.utc)
 
     def test_normalize_batch_skips_malformed(self):
-        results = [normalize(r) for r in MALFORMED_RECORDS]
-        assert all(r is None for r in results), "All malformed records should normalize to None"
+        results = [normalize(f) for f in MALFORMED_FEATURES]
+        assert all(r is None for r in results), "All malformed features should normalize to None"
 
-    def test_normalize_caseid_field(self):
-        raw = {**VALID_RAW}
-        del raw[":id"]
-        raw["caseid"] = "CASE-999"
-        rec = normalize(raw)
+    def test_normalize_null_division_stored_as_none(self):
+        feat = _make_feature(objectid=7, division=None)
+        rec = normalize(feat)
         assert rec is not None
-        assert rec.raw_id == "CASE-999"
+        assert rec.division is None

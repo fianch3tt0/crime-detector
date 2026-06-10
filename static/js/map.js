@@ -1,31 +1,32 @@
-/* global L */
+/* global L, getFilterParams */
 
 var map;
-var clusterGroup;
-var heatLayer;
-var heatmapEnabled = false;
+var crimeLayer;
 
 var FORT_WORTH_CENTER = [32.7555, -97.3308];
-var DEFAULT_ZOOM = 11;
+var FW_BOUNDS = [[32.4, -97.8], [33.2, -96.8]];
 
 function initMap() {
-  map = L.map("map").setView(FORT_WORTH_CENTER, DEFAULT_ZOOM);
+  map = L.map("map", {
+    minZoom: 10,
+    maxBounds: FW_BOUNDS,
+    maxBoundsViscosity: 1.0,
+  }).setView(FORT_WORTH_CENTER, 12);
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ' +
+      '&copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: "abcd",
     maxZoom: 19,
   }).addTo(map);
 
-  clusterGroup = L.markerClusterGroup({ chunkedLoading: true });
-  map.addLayer(clusterGroup);
+  crimeLayer = L.layerGroup().addTo(map);
 
-  map.on("moveend", debounce(onMapMoveEnd, 400));
+  map.on("moveend", debounce(function () {
+    loadCrimes(getFilterParams());
+  }, 400));
 
-  loadCrimes(getFilterParams());
-}
-
-function onMapMoveEnd() {
   loadCrimes(getFilterParams());
 }
 
@@ -40,8 +41,7 @@ function loadCrimes(params) {
 
   var url = "/api/crimes?bbox=" + encodeURIComponent(bbox);
   if (params.start) url += "&start=" + encodeURIComponent(params.start);
-  if (params.end) url += "&end=" + encodeURIComponent(params.end);
-  if (params.type) url += "&type=" + encodeURIComponent(params.type);
+  url += "&end=" + encodeURIComponent(params.end);
 
   fetch(url)
     .then(function (r) {
@@ -53,26 +53,12 @@ function loadCrimes(params) {
       var n = (fc.meta && fc.meta.count) || 0;
       if (countEl) countEl.textContent = n.toLocaleString() + " incidents";
 
-      clearLayers();
-
-      if (fc.meta && fc.meta.clustered) {
-        renderServerClusters(fc.features);
-      } else {
-        renderPoints(fc.features);
-        if (heatmapEnabled) renderHeatmap(fc.features);
-      }
+      crimeLayer.clearLayers();
+      renderPoints(fc.features || []);
     })
     .catch(function (err) {
       console.error("Failed to load crimes:", err);
     });
-}
-
-function clearLayers() {
-  clusterGroup.clearLayers();
-  if (heatLayer) {
-    map.removeLayer(heatLayer);
-    heatLayer = null;
-  }
 }
 
 function renderPoints(features) {
@@ -80,72 +66,46 @@ function renderPoints(features) {
     if (!feat.geometry || feat.geometry.type !== "Point") return;
     var coords = feat.geometry.coordinates;
     var p = feat.properties;
-    var marker = L.circleMarker([coords[1], coords[0]], {
-      radius: 6,
-      color: _categoryColor(p.category),
-      fillColor: _categoryColor(p.category),
-      fillOpacity: 0.7,
-      weight: 1,
-    });
-    marker.bindPopup(
-      "<strong>" + (p.category || "") + "</strong><br>" +
-      (p.offense || "") + "<br>" +
-      (p.occurred_at ? new Date(p.occurred_at).toLocaleDateString() : "") +
-      (p.beat ? "<br>Beat: " + p.beat : "")
-    );
-    clusterGroup.addLayer(marker);
-  });
-}
 
-function renderServerClusters(features) {
-  features.forEach(function (feat) {
-    if (!feat.geometry) return;
-    var p = feat.properties;
-    var coords = feat.geometry.coordinates || feat.geometry;
-    var latlng;
-    if (Array.isArray(coords)) {
-      latlng = [coords[1], coords[0]];
-    } else {
-      return;
-    }
-    var count = p.count || 0;
-    var radius = Math.min(6 + Math.sqrt(count) * 1.5, 40);
-    var marker = L.circleMarker(latlng, {
-      radius: radius,
+    var marker = L.circleMarker([coords[1], coords[0]], {
+      radius: 5,
       color: "#e94560",
       fillColor: "#e94560",
-      fillOpacity: 0.5,
+      fillOpacity: 0.85,
       weight: 1,
     });
-    marker.bindPopup("<strong>" + count.toLocaleString() + " incidents</strong>");
-    map.addLayer(marker);
+
+    marker.bindPopup(_buildPopup(p), { maxWidth: 260 });
+    crimeLayer.addLayer(marker);
   });
 }
 
-function renderHeatmap(features) {
-  var points = features
-    .filter(function (f) { return f.geometry && f.geometry.type === "Point"; })
-    .map(function (f) {
-      var c = f.geometry.coordinates;
-      return [c[1], c[0], 1];
-    });
-  if (!points.length) return;
-  heatLayer = L.heatLayer(points, { radius: 20, blur: 15, maxZoom: 17 });
-  map.addLayer(heatLayer);
-}
+function _buildPopup(p) {
+  var time = "Unknown time";
+  if (p.occurred_at) {
+    var d = new Date(p.occurred_at);
+    time = d.toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" }) +
+           "<br>" +
+           d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  }
 
-function toggleHeatmap(enabled) {
-  heatmapEnabled = enabled;
-  loadCrimes(getFilterParams());
-}
+  var location = [];
+  if (p.beat)     location.push("Beat " + p.beat);
+  if (p.division) location.push(p.division);
+  var locationStr = location.length ? location.join(" &middot; ") : "Location unavailable";
 
-function _categoryColor(category) {
-  var c = (category || "").toUpperCase();
-  if (c.includes("ASSAULT")) return "#e94560";
-  if (c.includes("THEFT") || c.includes("BURGLARY") || c.includes("ROBBERY")) return "#f5a623";
-  if (c.includes("DRUG")) return "#7b68ee";
-  if (c.includes("VANDAL")) return "#50c878";
-  return "#4a9eff";
+  return (
+    '<div class="popup">' +
+      '<div class="popup-category">' + (p.category || "Unknown") + "</div>" +
+      '<div class="popup-offense">' + (p.offense || "") + "</div>" +
+      '<div class="popup-meta">' +
+        '<span class="popup-icon">&#128337;</span> ' + time +
+      "</div>" +
+      '<div class="popup-meta">' +
+        '<span class="popup-icon">&#128205;</span> ' + locationStr +
+      "</div>" +
+    "</div>"
+  );
 }
 
 function debounce(fn, ms) {
@@ -154,4 +114,8 @@ function debounce(fn, ms) {
     clearTimeout(timer);
     timer = setTimeout(fn, ms);
   };
+}
+
+function _toDateString(d) {
+  return d.toISOString().slice(0, 10);
 }

@@ -1,8 +1,10 @@
 Flask==3.*
 Flask-Caching==2.*
+Flask-SQLAlchemy==3.*
 SQLAlchemy==2.*
 psycopg2-binary==2.*
 GeoAlchemy2==0.15.*
+shapely==2.*
 alembic==1.*
 requests==2.*
 APScheduler==3.*

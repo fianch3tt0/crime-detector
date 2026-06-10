@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def run_incremental_ingest(app) -> None:
     """APScheduler job: pull new records from SODA and upsert them."""
-    from crime_detector.ingestion.client import SodaClient
+    from crime_detector.ingestion.client import ArcGISClient
     from crime_detector.ingestion.normalizer import normalize
     from crime_detector.storage.repository import CrimeRepository
     from crime_detector.extensions import db
@@ -21,10 +21,9 @@ def run_incremental_ingest(app) -> None:
         since = repo.get_last_ingest_timestamp()
         logger.info("Starting incremental ingest since %s", since)
 
-        client = SodaClient(
-            endpoint=app.config["SODA_ENDPOINT"],
-            app_token=app.config["SODA_APP_TOKEN"],
-            page_size=app.config["SODA_PAGE_SIZE"],
+        client = ArcGISClient(
+            endpoint=app.config["ARCGIS_ENDPOINT"],
+            page_size=app.config["PAGE_SIZE"],
         )
 
         records = []

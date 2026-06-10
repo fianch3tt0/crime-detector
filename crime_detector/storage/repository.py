@@ -127,9 +127,10 @@ class CrimeRepository:
 
         sql = text(f"""
             SELECT
-                ST_AsGeoJSON(ST_Centroid(ST_Collect(geometry)))::json AS geojson,
-                SUM(cat_count)                                         AS total,
-                json_object_agg(category, cat_count)                   AS categories
+                ST_X(ST_Centroid(ST_Collect(cell))) AS lon,
+                ST_Y(ST_Centroid(ST_Collect(cell))) AS lat,
+                SUM(cat_count)                      AS total,
+                json_object_agg(category, cat_count) AS categories
             FROM (
                 SELECT
                     ST_SnapToGrid(geometry, :grid_size) AS cell,
@@ -145,9 +146,9 @@ class CrimeRepository:
         rows = self._session.execute(sql, params).fetchall()
         return [
             {
-                "geojson": row.geojson,
+                "geojson": {"type": "Point", "coordinates": [float(row.lon), float(row.lat)]},
                 "count": int(row.total),
-                "categories": row.categories,
+                "categories": row.categories if isinstance(row.categories, dict) else {},
             }
             for row in rows
         ]

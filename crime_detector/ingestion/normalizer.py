@@ -26,29 +26,43 @@ class NormalizedRecord:
     division: str | None
 
 
-def normalize(raw: dict) -> NormalizedRecord | None:
-    """Map a raw SODA record to NormalizedRecord.
+def normalize(feature: dict) -> NormalizedRecord | None:
+    """Map a raw ArcGIS GeoJSON feature to NormalizedRecord.
 
-    Returns None for records with missing/invalid coordinates or unparseable
-    dates so callers can skip them cleanly.
+    Returns None for records with missing/invalid coordinates, unparseable
+    dates, or missing OBJECTID so callers can skip them cleanly.
     """
     try:
-        raw_id = _extract_raw_id(raw)
-        if not raw_id:
+        props = feature.get("properties") or {}
+        geom = feature.get("geometry") or {}
+
+        raw_id = str(props.get("OBJECTID") or "").strip()
+        if not raw_id or raw_id == "0":
             return None
 
-        lat, lon = _extract_coords(raw)
-        if lat is None or lon is None:
+        coords = geom.get("coordinates")
+        if not coords or len(coords) < 2:
             return None
 
-        occurred_at = _parse_date(raw.get("date") or raw.get("occurred_at") or "")
+        try:
+            lon, lat = float(coords[0]), float(coords[1])  # GeoJSON order: [lon, lat]
+        except (TypeError, ValueError):
+            return None
+
+        bbox = FORT_WORTH_BBOX
+        if not (bbox["lat_min"] <= lat <= bbox["lat_max"]):
+            return None
+        if not (bbox["lon_min"] <= lon <= bbox["lon_max"]):
+            return None
+
+        occurred_at = _parse_epoch_ms(props.get("From_Date"))
         if occurred_at is None:
             return None
 
-        category = (raw.get("nature_of_call") or raw.get("category") or "UNKNOWN").strip().upper()
-        offense = (raw.get("offense_description") or raw.get("offense") or "UNKNOWN").strip().upper()
-        beat = (raw.get("beat") or "").strip() or None
-        division = (raw.get("sector") or raw.get("division") or "").strip() or None
+        category = (props.get("Nature_Of_Call") or "UNKNOWN").strip().upper()
+        offense = (props.get("Offense_Desc") or "UNKNOWN").strip().upper()
+        beat = (props.get("Beat") or "").strip() or None
+        division = (props.get("Division") or "").strip() or None
 
         return NormalizedRecord(
             raw_id=raw_id,
@@ -61,55 +75,15 @@ def normalize(raw: dict) -> NormalizedRecord | None:
             division=division,
         )
     except Exception:
-        logger.debug("Failed to normalize record: %s", raw, exc_info=True)
+        logger.debug("Failed to normalize feature: %s", feature, exc_info=True)
         return None
 
 
-def _extract_raw_id(raw: dict) -> str | None:
-    for field in (":id", "caseid", "case_number", "objectid"):
-        val = raw.get(field)
-        if val:
-            return str(val).strip()
-    return None
-
-
-def _extract_coords(raw: dict) -> tuple[float | None, float | None]:
-    lat_raw = raw.get("latitude") or raw.get("lat")
-    lon_raw = raw.get("longitude") or raw.get("lon")
-
-    # SODA may also embed coords in a nested "location" dict
-    if (lat_raw is None or lon_raw is None) and isinstance(raw.get("location"), dict):
-        coords = raw["location"].get("coordinates")
-        if isinstance(coords, list) and len(coords) == 2:
-            lon_raw, lat_raw = coords[0], coords[1]
-
+def _parse_epoch_ms(value) -> datetime | None:
+    """ArcGIS Date fields arrive as integer epoch milliseconds."""
+    if value is None:
+        return None
     try:
-        lat = float(lat_raw)
-        lon = float(lon_raw)
-    except (TypeError, ValueError):
-        return None, None
-
-    bbox = FORT_WORTH_BBOX
-    if not (bbox["lat_min"] <= lat <= bbox["lat_max"]):
-        return None, None
-    if not (bbox["lon_min"] <= lon <= bbox["lon_max"]):
-        return None, None
-
-    return lat, lon
-
-
-def _parse_date(value: str) -> datetime | None:
-    if not value:
+        return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
         return None
-    for fmt in (
-        "%Y-%m-%dT%H:%M:%S.%f",
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d",
-    ):
-        try:
-            dt = datetime.strptime(value, fmt)
-            return dt.replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    return None

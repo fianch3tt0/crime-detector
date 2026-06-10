@@ -8,12 +8,11 @@ class BaseConfig:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key")
     SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL", "postgresql://localhost/crimedetector")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SODA_ENDPOINT = os.environ.get(
-        "SODA_ENDPOINT",
-        "https://data.fortworthtexas.gov/resource/k6ic-7kp7.json",
+    ARCGIS_ENDPOINT = os.environ.get(
+        "ARCGIS_ENDPOINT",
+        "https://mapit.fortworthtexas.gov/ags/rest/services/CIVIC/Crime_Data/MapServer/0/query",
     )
-    SODA_APP_TOKEN = os.environ.get("SODA_APP_TOKEN", "")
-    SODA_PAGE_SIZE = 1000
+    PAGE_SIZE = 1000
     CACHE_TYPE = "SimpleCache"
     CACHE_DEFAULT_TIMEOUT = 300
     CLUSTER_THRESHOLD = 500

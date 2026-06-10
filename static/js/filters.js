@@ -1,64 +1,50 @@
-function bindFilterControls() {
-  var startEl = document.getElementById("start-date");
-  var endEl = document.getElementById("end-date");
-  var typeEl = document.getElementById("crime-type");
-  var heatEl = document.getElementById("heatmap-toggle");
+var selectedDays = 0;
 
-  // Set sensible defaults: last 90 days
-  var now = new Date();
-  var past = new Date(now);
-  past.setDate(past.getDate() - 90);
-  if (endEl) endEl.value = _toDateString(now);
-  if (startEl) startEl.value = _toDateString(past);
+function initScrollWheel() {
+  var wheel = document.getElementById("date-scroll");
+  if (!wheel) return;
 
-  function onChange() {
-    loadCrimes(getFilterParams());
-  }
+  var items = Array.prototype.slice.call(wheel.querySelectorAll(".scroll-item"));
+  var itemHeight = 30;
 
-  if (startEl) startEl.addEventListener("change", onChange);
-  if (endEl) endEl.addEventListener("change", onChange);
-  if (typeEl) typeEl.addEventListener("change", onChange);
-  if (heatEl) {
-    heatEl.addEventListener("change", function () {
-      toggleHeatmap(heatEl.checked);
-    });
-  }
+  // Scroll to top (Today selected) on init
+  wheel.scrollTop = 0;
+  _highlightSelected(items, 0);
+
+  wheel.addEventListener("scroll", debounce(function () {
+    var idx = Math.round(wheel.scrollTop / itemHeight);
+    idx = Math.max(0, Math.min(idx, items.length - 1));
+    var days = parseInt(items[idx].dataset.days, 10);
+    if (days !== selectedDays) {
+      selectedDays = days;
+      _highlightSelected(items, idx);
+      _updateDateDisplay(items[idx].textContent);
+      loadCrimes(getFilterParams());
+    }
+  }, 150));
+}
+
+function _highlightSelected(items, idx) {
+  items.forEach(function (el, i) {
+    el.classList.toggle("selected", i === idx);
+  });
+}
+
+function _updateDateDisplay(label) {
+  var el = document.getElementById("date-display");
+  if (el) el.textContent = label;
 }
 
 function getFilterParams() {
-  var startEl = document.getElementById("start-date");
-  var endEl = document.getElementById("end-date");
-  var typeEl = document.getElementById("crime-type");
-
+  var today = new Date();
+  var start = new Date(today);
+  start.setDate(start.getDate() - selectedDays);
   return {
-    start: startEl ? startEl.value : "",
-    end: endEl ? endEl.value : "",
-    type: typeEl ? typeEl.value : "",
+    start: _toDateString(start),
+    end: _toDateString(today),
   };
-}
-
-function populateTypeDropdown() {
-  fetch("/api/types")
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      var sel = document.getElementById("crime-type");
-      if (!sel || !data.types) return;
-      data.types.forEach(function (t) {
-        var opt = document.createElement("option");
-        opt.value = t;
-        opt.textContent = _titleCase(t);
-        sel.appendChild(opt);
-      });
-    })
-    .catch(function (err) {
-      console.warn("Could not load crime types:", err);
-    });
 }
 
 function _toDateString(d) {
   return d.toISOString().slice(0, 10);
-}
-
-function _titleCase(s) {
-  return s.toLowerCase().replace(/\b\w/g, function (c) { return c.toUpperCase(); });
 }

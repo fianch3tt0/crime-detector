@@ -22,7 +22,6 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://crimedetector:${POSTGRES_PASSWORD}@db/crimedetector
-      SODA_APP_TOKEN: ${SODA_APP_TOKEN}
       FLASK_ENV: production
       SECRET_KEY: ${SECRET_KEY}
     depends_on:
@@ -35,7 +34,6 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://crimedetector:${POSTGRES_PASSWORD}@db/crimedetector
-      SODA_APP_TOKEN: ${SODA_APP_TOKEN}
       FLASK_ENV: production
       SECRET_KEY: ${SECRET_KEY}
     depends_on:

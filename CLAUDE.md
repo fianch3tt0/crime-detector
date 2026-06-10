@@ -6,26 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this app does
 
-Fort Worth Crime Detector is a public web app that pulls reported crime data from the City of Fort Worth's open data portal, stores it in a PostgreSQL database, and renders it on an interactive map with filters and clustering. The live SODA API is **never** called on a page request — all map data is served from the local database, which is kept fresh by a background worker.
+Fort Worth Crime Detector is a public web app that pulls reported crime data from the City of Fort Worth's ArcGIS Feature Layer, stores it in a PostgreSQL database, and renders it on an interactive map with filters and clustering. The live ArcGIS endpoint is **never** called on a page request — all map data is served from the local database, which is kept fresh by a background worker.
 
 ---
 
 ## External accounts and credentials you need to set up
 
-Before you can run the app you need two things from outside this codebase. Neither costs money.
+Before you can run the app you need one thing from outside this codebase.
 
-### 1. Socrata App Token (Fort Worth open data)
+### 1. No account or token needed for crime data
 
-The crime data comes from the City of Fort Worth's Socrata open data portal. The app works without a token, but requests will be rate-limited to a few per hour. A free token removes that limit.
+The Fort Worth data portal (data.fortworthtexas.gov) is an **ArcGIS Hub** site — the real host behind it is `open-data-cfw.hub.arcgis.com` (Esri, not Socrata). Public ArcGIS feature layers require no token and no account for read access. The "Get Token" link on the service page is for secured admin access to ArcGIS Server — ignore it.
 
-**Steps:**
-1. Go to https://data.fortworthtexas.gov
-2. Click **Sign In** → **Sign Up** and create a free account
-3. After logging in, click your profile picture → **Developer Settings**
-4. Click **Create New App Token**, give it a name (e.g. "Crime Detector"), and copy the token string
-5. Paste it as `SODA_APP_TOKEN=abc123...` in your `.env` file
+The crime layer endpoint is:
+`https://mapit.fortworthtexas.gov/ags/rest/services/CIVIC/Crime_Data/MapServer/0`
 
-The dataset being queried is `k6ic-7kp7` (Fort Worth Police incident reports). You can browse it at https://data.fortworthtexas.gov/Public-Safety/Crime-Data/k6ic-7kp7
+You can browse one live record in your browser at:
+`https://mapit.fortworthtexas.gov/ags/rest/services/CIVIC/Crime_Data/MapServer/0/query?where=1%3D1&outFields=*&resultRecordCount=1&outSR=4326&f=geojson`
 
 ### 2. PostgreSQL database with PostGIS
 
@@ -57,11 +54,9 @@ Paste whichever URI you get as `DATABASE_URL=...` in your `.env` file.
 ## First-time setup checklist
 
 ```
-[ ] 1. Get a SODA App Token (data.fortworthtexas.gov — free account)
-[ ] 2. Have a Postgres + PostGIS database (Docker, local install, or cloud)
+[ ] 1. Have a Postgres + PostGIS database (Docker, local install, or cloud)
 [ ] 3. Copy .env.example → .env  and fill in every value:
           DATABASE_URL=postgresql://user:pass@host/crimedetector
-          SODA_APP_TOKEN=your_token_here
           POSTGRES_PASSWORD=any_password    (only used by docker-compose db container)
           SECRET_KEY=any_long_random_string
           FLASK_ENV=development
@@ -82,7 +77,7 @@ Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 ```powershell
 # First time only: create your .env file
 cp .env.example .env
-# Edit .env and fill in SODA_APP_TOKEN, SECRET_KEY, POSTGRES_PASSWORD
+# Edit .env and fill in SECRET_KEY, POSTGRES_PASSWORD
 
 # Start everything: database + web server + ingest worker
 docker compose up
@@ -107,7 +102,7 @@ pip install -r requirements-dev.txt
 
 # 3. Create your .env file (one-time)
 cp .env.example .env
-# Open .env and fill in DATABASE_URL, SODA_APP_TOKEN, SECRET_KEY
+# Open .env and fill in DATABASE_URL, SECRET_KEY
 
 # 4. Create the database schema (one-time, or after pulling new migrations)
 alembic upgrade head
@@ -159,7 +154,7 @@ python -m pytest tests/ --cov=crime_detector --cov-report=term-missing
 ```
 
 Test files by phase:
-- `tests/test_ingestion.py` — SodaClient paging and `normalize()` (no DB needed, HTTP is mocked)
+- `tests/test_ingestion.py` — ArcGISClient paging and `normalize()` (no DB needed, HTTP is mocked)
 - `tests/test_storage.py` — `CrimeRepository` upsert, dedup, and spatial queries (needs real Postgres)
 - `tests/test_api.py` — Flask routes and GeoJSON responses (repository is mocked, no DB needed)
 - `tests/test_smoke.py` — deployed health endpoint and map page load (needs `DEPLOYED_URL`)
@@ -171,7 +166,7 @@ Test files by phase:
 The app has five layers that data flows through in order:
 
 ```
-Fort Worth SODA API
+Fort Worth ArcGIS Feature Layer
         ↓  (hourly, background worker)
   ingestion/          — fetches + normalizes raw records
         ↓
@@ -182,27 +177,42 @@ Fort Worth SODA API
   frontend            — Leaflet map renders markers / clusters
 ```
 
-**The browser never talks to Fort Worth's API directly.** The ingest worker is the only thing that touches the SODA endpoint.
+**The browser never talks to Fort Worth's API directly.** The ingest worker is the only thing that touches the ArcGIS endpoint.
 
 ### How each layer works
 
-#### `crime_detector/ingestion/client.py` — SodaClient
+#### `crime_detector/ingestion/client.py` — ArcGISClient
 
-Responsible for paging through the SODA API. Uses raw `requests` (not the `sodapy` library) so the `$limit`, `$offset`, and `$where` query parameters are fully under our control.
+Responsible for paging through the ArcGIS Feature Layer query endpoint. Uses raw `requests` with ArcGIS REST query parameters.
 
-- `fetch_all(since=None)` — yields raw record dicts. Adds `$where=date > '{since}'` when a timestamp is provided so only new records are fetched on subsequent runs. Stops when a page returns fewer records than the page size (signals end of data).
-- Page size defaults to 1000 records. The app token is sent as an `X-App-Token` header on every request.
+- `fetch_all(since=None)` — yields raw GeoJSON feature dicts. Adds a `where` clause (`<DateField> > DATE 'YYYY-MM-DD'`) when a timestamp is provided for incremental pulls. Stops when a page returns fewer records than the page size or `exceededTransferLimit` is absent/false in the response.
+- Pagination uses `resultOffset` + `resultRecordCount` (max 1000) instead of `$limit`/`$offset`.
+- **Always passes `outSR=4326`** — the layer's native spatial reference is WKID 2276 (Texas State Plane, feet). Without this every coordinate lands in the Gulf of Mexico.
+- Uses `f=geojson` — response is standard GeoJSON; coordinates come from `feature["geometry"]["coordinates"]` as `[lon, lat]` and attributes from `feature["properties"]`.
+- No app token or auth header required — the layer is public.
 
 #### `crime_detector/ingestion/normalizer.py` — normalize()
 
-This is the **only** place SODA field names are mapped to our internal schema. If Fort Worth ever renames a field or migrates from Socrata to ArcGIS, only this file needs updating.
+This is the **only** place ArcGIS field names are mapped to our internal schema. If Fort Worth renames a field, only this file needs updating.
 
-`normalize(raw_dict)` returns a `NormalizedRecord` dataclass or `None`. It returns `None` (skips the record) for:
-- Missing or non-numeric `latitude` / `longitude`
+`normalize(raw_feature)` accepts a GeoJSON feature dict (not a flat dict) and returns a `NormalizedRecord` dataclass or `None`. It returns `None` (skips the record) for:
+- Missing or non-numeric coordinates in `feature["geometry"]["coordinates"]`
 - Coordinates outside the Fort Worth bounding box (~32.5–33.1°N, ~97.0–97.6°W)
-- Unparseable `date` field
+- Unparseable date field
 
-Fields intentionally **not** stored: `block_address`, `zip_code`, `city`, `state`, `council_district` — excluded to avoid pinning records to specific addresses.
+**ArcGIS → internal field map** (key fields — confirm exact names via the discovery query):
+
+| ArcGIS property | Internal field | Notes |
+|---|---|---|
+| `Offense` | `category` | NIBRS code (e.g. `09A`, `220`, `13A`) — optionally expand via code dict |
+| `Case_No_Offense` or offense label | `offense` | Human-readable description |
+| `geometry.coordinates[1]` / `[0]` | `lat` / `lon` | GeoJSON is `[lon, lat]` |
+| `OBJECTID` or case number field | `raw_id` | Dedup key |
+| date field (confirm name) | `occurred_at` | ArcGIS date format |
+| `beat` field (confirm name) | `beat` | |
+| `sector`/`division` field (confirm name) | `division` | |
+
+Fields intentionally **not** stored: block address, zip code, city, state — excluded to avoid pinning records to specific addresses.
 
 #### `crime_detector/storage/repository.py` — CrimeRepository
 
@@ -247,8 +257,7 @@ Category colors in `map.js` are hardcoded by keyword: assaults → red, theft/bu
 | Variable | What it does |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
-| `SODA_APP_TOKEN` | Socrata app token (avoids rate limiting) |
-| `SODA_ENDPOINT` | SODA API URL — override this if Fort Worth migrates to ArcGIS |
+| `ARCGIS_ENDPOINT` | ArcGIS Feature Layer query URL — defaults to the Fort Worth crime layer |
 | `SECRET_KEY` | Flask session signing key |
 | `FLASK_ENV` | `development` / `testing` / `production` |
 | `POSTGRES_PASSWORD` | Used by docker-compose for the `db` container |

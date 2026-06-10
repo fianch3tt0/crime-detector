@@ -9,42 +9,40 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-class SodaClient:
-    def __init__(self, endpoint: str, app_token: str = "", page_size: int = 1000) -> None:
+class ArcGISClient:
+    def __init__(self, endpoint: str, page_size: int = 1000) -> None:
         self.endpoint = endpoint
-        self.app_token = app_token
         self.page_size = page_size
         self._session = requests.Session()
-        if app_token:
-            self._session.headers["X-App-Token"] = app_token
 
     def fetch_all(self, since: datetime | None = None) -> Iterator[dict]:
-        """Page through the SODA endpoint, yielding raw record dicts.
+        """Page through the ArcGIS Feature Layer, yielding raw GeoJSON feature dicts.
 
-        Adds a $where filter when `since` is provided so only newer records
-        are returned (incremental pull).  Stops when a page is shorter than
-        page_size, signalling the end of the dataset.
+        Passes outSR=4326 on every request — the layer's native SR is WKID 2276
+        (Texas State Plane, feet) and coordinates land in the Gulf without this.
+        Stops when the response lacks exceededTransferLimit=true.
         """
         offset = 0
         while True:
-            params = self._build_params(offset, since)
-            page = self._get_page(params)
-            yield from page
-            if len(page) < self.page_size:
+            params = {
+                "where": self._where_clause(since),
+                "outFields": "*",
+                "outSR": "4326",
+                "f": "geojson",
+                "resultRecordCount": self.page_size,
+                "resultOffset": offset,
+            }
+            response = self._session.get(self.endpoint, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            features = data.get("features", [])
+            yield from features
+            if not data.get("exceededTransferLimit"):
                 break
             offset += self.page_size
 
-    def _build_params(self, offset: int, since: datetime | None) -> dict:
-        params: dict = {
-            "$limit": self.page_size,
-            "$offset": offset,
-            "$order": "date ASC",
-        }
-        if since is not None:
-            params["$where"] = f"date > '{since.isoformat()}'"
-        return params
-
-    def _get_page(self, params: dict) -> list[dict]:
-        response = self._session.get(self.endpoint, params=params, timeout=30)
-        response.raise_for_status()
-        return response.json()
+    def _where_clause(self, since: datetime | None) -> str:
+        if since is None:
+            return "1=1"
+        ts = since.strftime("%Y-%m-%d %H:%M:%S")
+        return f"From_Date > TIMESTAMP '{ts}'"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, jsonify, request
 
 from crime_detector.extensions import cache, db
 from crime_detector.storage.repository import CrimeRepository
@@ -79,39 +79,21 @@ def get_crimes():
 
     start = _parse_date(request.args.get("start"))
     end = _parse_date(request.args.get("end"))
-    crime_type = request.args.get("type") or None
 
     if start and end and start > end:
         return jsonify({"error": "start must be before end", "code": 400}), 400
 
     repo = CrimeRepository(db.session)
-    threshold = current_app.config.get("CLUSTER_THRESHOLD", 500)
-    bbox_area = (max_lon - min_lon) * (max_lat - min_lat)
-
-    use_clustering = bbox_area > 1.0
-
-    if not use_clustering:
-        crimes = repo.query_bbox(min_lon, min_lat, max_lon, max_lat, start, end, crime_type)
-        if len(crimes) > threshold:
-            use_clustering = True
-
-    if use_clustering:
-        clusters = repo.query_bbox_clustered(min_lon, min_lat, max_lon, max_lat, start, end, crime_type)
-        total = sum(c["count"] for c in clusters)
-        features = [_cluster_feature(c) for c in clusters]
-        clustered = True
-    else:
-        total = len(crimes)  # type: ignore[possibly-undefined]
-        features = [_crime_feature(c) for c in crimes]  # type: ignore[possibly-undefined]
-        clustered = False
+    crimes = repo.query_bbox(min_lon, min_lat, max_lon, max_lat, start, end, None)
+    features = [_crime_feature(c) for c in crimes]
 
     return jsonify(
         {
             "type": "FeatureCollection",
             "features": features,
             "meta": {
-                "count": total,
-                "clustered": clustered,
+                "count": len(features),
+                "clustered": False,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
             },
         }

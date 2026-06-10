@@ -17,6 +17,7 @@ header {
   padding: 8px 16px;
   background: #16213e;
   border-bottom: 1px solid #0f3460;
+  flex-shrink: 0;
 }
 
 header h1 {
@@ -25,48 +26,150 @@ header h1 {
   color: #e94560;
 }
 
+/* ---- Controls bar ---- */
+
 #controls {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: 20px;
+  padding: 10px 16px;
   background: #16213e;
   border-bottom: 1px solid #0f3460;
+  flex-shrink: 0;
 }
 
-#controls label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.85rem;
+#date-label {
+  font-size: 0.8rem;
   color: #a0a0c0;
+  white-space: nowrap;
 }
 
-#controls input[type="date"],
-#controls select {
-  background: #0f3460;
-  color: #e0e0e0;
-  border: 1px solid #1a4a8a;
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 0.85rem;
-}
-
-.toggle-label {
-  cursor: pointer;
+#date-label strong,
+#date-display {
+  color: #e94560;
 }
 
 #crime-count {
   font-size: 0.8rem;
   color: #6a6a8a;
   margin-left: auto;
+  white-space: nowrap;
 }
+
+/* ---- Scroll wheel ---- */
+
+.scroll-wheel-wrap {
+  position: relative;
+  height: 90px;
+  width: 160px;
+  flex-shrink: 0;
+  border-left: 2px solid #e94560;
+  padding-left: 12px;
+}
+
+/* Fade gradients at top and bottom */
+.scroll-wheel-wrap::before,
+.scroll-wheel-wrap::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 0;
+  height: 26px;
+  z-index: 1;
+  pointer-events: none;
+}
+.scroll-wheel-wrap::before {
+  top: 0;
+  background: linear-gradient(to bottom, #16213e 40%, transparent);
+}
+.scroll-wheel-wrap::after {
+  bottom: 0;
+  background: linear-gradient(to top, #16213e 40%, transparent);
+}
+
+.scroll-wheel {
+  height: 90px;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  padding-top: 30px;
+  padding-bottom: 30px;
+}
+
+.scroll-wheel::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-item {
+  height: 30px;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  display: flex;
+  align-items: center;
+  font-size: 0.85rem;
+  color: #4a4a6a;
+  white-space: nowrap;
+  transition: color 0.15s;
+  cursor: default;
+}
+
+.scroll-item.selected {
+  color: #e94560;
+  font-weight: 600;
+}
+
+/* ---- Leaflet popup overrides ---- */
+
+.leaflet-popup-content-wrapper {
+  background: #16213e;
+  color: #e0e0e0;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.leaflet-popup-tip {
+  background: #16213e;
+}
+
+.leaflet-popup-close-button {
+  color: #6a6a8a !important;
+}
+
+.popup-category {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e94560;
+  margin-bottom: 3px;
+}
+
+.popup-offense {
+  font-size: 0.8rem;
+  color: #c0c0d8;
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+
+.popup-meta {
+  font-size: 0.78rem;
+  color: #8888aa;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.popup-icon {
+  font-size: 0.75rem;
+}
+
+/* ---- Map ---- */
 
 #map {
   flex: 1;
   width: 100%;
+  min-height: 0;
 }
+
+/* ---- Footer ---- */
 
 footer {
   padding: 6px 16px;
@@ -75,6 +178,7 @@ footer {
   font-size: 0.75rem;
   color: #6a6a8a;
   line-height: 1.4;
+  flex-shrink: 0;
 }
 
 footer a {
