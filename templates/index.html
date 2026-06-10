@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fort Worth Crime Map</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet MarkerCluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <!-- Leaflet Heat -->
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+  <link rel="stylesheet" href="/static/css/main.css" />
+</head>
+<body>
+
+<header>
+  <h1>Fort Worth Crime Map</h1>
+</header>
+
+<div id="controls">
+  <label>
+    From
+    <input type="date" id="start-date" />
+  </label>
+  <label>
+    To
+    <input type="date" id="end-date" />
+  </label>
+  <label>
+    Type
+    <select id="crime-type">
+      <option value="">All types</option>
+    </select>
+  </label>
+  <label class="toggle-label">
+    <input type="checkbox" id="heatmap-toggle" />
+    Heatmap
+  </label>
+  <span id="crime-count"></span>
+</div>
+
+<div id="map"></div>
+
+<footer>
+  <p>
+    Data source:
+    <a href="https://data.fortworthtexas.gov" target="_blank" rel="noopener noreferrer">
+      City of Fort Worth Open Data
+    </a>
+    (dataset k6ic-7kp7).
+    Crime data is <strong>as reported</strong>; accuracy and completeness are not guaranteed.
+    Records are displayed at the granularity provided by the source and are
+    <strong>not pinned to specific addresses or residences</strong>.
+  </p>
+</footer>
+
+<script src="/static/js/map.js"></script>
+<script src="/static/js/filters.js"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    initMap();
+    bindFilterControls();
+    populateTypeDropdown();
+  });
+</script>
+
+</body>
+</html>

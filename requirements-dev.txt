@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest==8.*
+pytest-flask==1.*
+pytest-postgresql==4.*
+responses==0.25.*
+coverage==7.*
