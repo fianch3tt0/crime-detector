@@ -206,7 +206,8 @@ class TestCrimesFilters:
         assert start_val is not None
         assert end_val is not None
 
-    def test_type_filter_forwarded_to_repo(self, client):
+    def test_type_param_is_ignored(self, client):
+        # The route no longer filters by type — crime_type is always None
         with _patch_repo() as mock_cls:
             resp = client.get(f"/api/crimes?bbox={VALID_BBOX}&type=ASSAULT")
         assert resp.status_code == 200
@@ -215,45 +216,52 @@ class TestCrimesFilters:
         args = call_args[0] if call_args[0] else []
         kwargs = call_args[1] if call_args[1] else {}
         type_val = kwargs.get("crime_type") or (args[6] if len(args) > 6 else None)
-        assert type_val == "ASSAULT"
+        assert type_val is None
 
 
 # ---------------------------------------------------------------------------
-# /api/crimes — clustering
+# /api/crimes — clustering is always disabled
 # ---------------------------------------------------------------------------
 
-class TestCrimesClustering:
-    def test_large_bbox_returns_clustered_response(self, client):
-        # bbox area > 1 degree² triggers clustering path
+class TestCrimesNeverClusters:
+    def test_large_bbox_still_returns_unclustered(self, client):
+        # Even a huge bbox must return clustered=False — clustering is removed
         big_bbox = "-98.0,32.0,-96.0,34.0"
-        cluster_data = [
-            {
-                "geojson": {"type": "Point", "coordinates": [-97.33, 32.75]},
-                "count": 142,
-                "categories": {"ASSAULT": 50, "THEFT": 92},
-            }
-        ]
-        with _patch_repo(clusters=cluster_data):
+        with _patch_repo(crimes=[_make_crime()]):
             resp = client.get(f"/api/crimes?bbox={big_bbox}")
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["meta"]["clustered"] is True
-        feat = data["features"][0]
-        assert feat["properties"]["cluster"] is True
-        assert feat["properties"]["count"] == 142
+        assert data["meta"]["clustered"] is False
 
-    def test_small_bbox_above_threshold_clusters(self, client, app):
-        # When result count > CLUSTER_THRESHOLD, switch to clustering
-        app.config["CLUSTER_THRESHOLD"] = 2
-        many_crimes = [_make_crime(id=i, raw_id=f"FW-{i:04d}") for i in range(5)]
-        cluster_data = [
-            {
-                "geojson": {"type": "Point", "coordinates": [-97.33, 32.75]},
-                "count": 5,
-                "categories": {"ASSAULT": 5},
-            }
-        ]
-        with _patch_repo(crimes=many_crimes, clusters=cluster_data):
+    def test_many_crimes_still_unclustered(self, client):
+        # Even with many crimes in the viewport, no clustering
+        many = [_make_crime(id=i, raw_id=f"FW-{i:04d}") for i in range(50)]
+        with _patch_repo(crimes=many):
             resp = client.get(f"/api/crimes?bbox={VALID_BBOX}")
         data = resp.get_json()
-        assert data["meta"]["clustered"] is True
+        assert data["meta"]["clustered"] is False
+        assert data["meta"]["count"] == 50
+
+    def test_feature_coordinates_are_lon_lat_order(self, client):
+        # GeoJSON spec: coordinates must be [longitude, latitude]
+        crime = _make_crime(lat=FW_LAT, lon=FW_LON)
+        with _patch_repo(crimes=[crime]):
+            resp = client.get(f"/api/crimes?bbox={VALID_BBOX}")
+        coords = resp.get_json()["features"][0]["geometry"]["coordinates"]
+        lon, lat = coords[0], coords[1]
+        assert -180 <= lon <= 180, "first coord must be longitude"
+        assert -90 <= lat <= 90, "second coord must be latitude"
+        assert abs(lon - FW_LON) < 0.01
+        assert abs(lat - FW_LAT) < 0.01
+
+    def test_occurred_at_is_iso_string(self, client):
+        # occurred_at must be a parseable ISO 8601 string for the popup to work
+        crime = _make_crime(occurred_at=datetime(2024, 3, 15, 2, 30, tzinfo=timezone.utc))
+        with _patch_repo(crimes=[crime]):
+            resp = client.get(f"/api/crimes?bbox={VALID_BBOX}")
+        occurred_at = resp.get_json()["features"][0]["properties"]["occurred_at"]
+        assert isinstance(occurred_at, str)
+        parsed = datetime.fromisoformat(occurred_at)
+        assert parsed.year == 2024
+        assert parsed.month == 3
+        assert parsed.day == 15
