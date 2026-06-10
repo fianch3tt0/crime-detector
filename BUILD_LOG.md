@@ -96,3 +96,18 @@ Files changing: temmap.js,
 static/js/filters.j
 Files not changing:er config
 
+
+
+
+
+Essay:
+
+
+The ArcGIS migration would have taken me most of a day on my own. Figuring out the right data source, updating the code, fixing the tests, and making sure everything still worked would have taken 6–8 hours. Claude helped me get it done in one session. It also helped track down a database issue that would have taken me a long time to debug by myself.
+
+I had to step in when Claude kept trying to keep features I had already decided to remove. I had to clearly say that I wanted individual points only, not clustering. I also noticed that the crime markers on the map looked completely wrong. Claude's approach made them appear much larger than intended. Since I could actually see the product, I knew something needed to change and chose a better solution.
+
+
+This project showed that I'm comfortable making high-level decisions about what should and shouldn't be included, but I still have technical areas where I need more experience. I could identify when something wasn't working, but not always explain exactly why. Going forward, I want to strengthen my understanding so I can better evaluate and improve the solutions AI provides, communicate my reasoning more clearly, and troubleshoot issues more independently. It also showed me where I should focus my learning next.
+
+I'll use AI to help me understand unfamiliar projects faster, not to avoid learning them. It can summarize code, trace how information moves through a system, and point me toward important files, but I'll always verify its answers myself. First I'll use it to get an overview of the codebase and identify the main components and tests. Then I'll read through those areas on my own. That approach should help me get up to speed quickly while making sure I truly understand the work I'm doing.
